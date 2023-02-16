@@ -176,7 +176,30 @@ func handleKratosError(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Full HTTP response: %v\n", resp)
 		return
 	}
-	writeResponse(w, resp)
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalf("ERROR: %s", err)
+	}
+	selfServiceError := new(SelfserviceError)
+	if err := json.Unmarshal(body, selfServiceError); err != nil {
+		log.Fatalf("ERROR: %s", err)
+	}
+	selfServiceErrorProxy := newSelfserviceErrorProxy(*selfServiceError)
+	selfServiceErrorJson, err := json.Marshal(selfServiceErrorProxy)
+	if err != nil {
+		log.Fatalf("ERROR: %s", err)
+	}
+	log.Printf("The json text is %s", string(selfServiceErrorJson))
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			w.Header().Set(k, v)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	// We need to set the headers before setting the status code, otherwise
+	// the response writer freaks out
+	w.WriteHeader(resp.StatusCode)
+	json.NewEncoder(w).Encode(selfServiceErrorProxy)
 	return
 }
 
@@ -271,4 +294,28 @@ func parseBody(r *http.Request, body interface{}) *interface{} {
 		log.Println(err)
 	}
 	return &body
+}
+
+type SelfserviceError struct {
+	Id          string       `json:"id"`
+	ServerError ErrorMessage `json:"error"`
+	Created_at  string       `json:"created_at"`
+	Updated_at  string       `json:"updated_at"`
+}
+
+type ErrorMessage struct {
+	Code    int    `json:"code"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
+}
+
+type SelfserviceErrorProxy struct {
+	Id      string `json:"id"`
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
+}
+
+func newSelfserviceErrorProxy(s SelfserviceError) SelfserviceErrorProxy {
+	return SelfserviceErrorProxy{Id: s.Id, Reason: s.ServerError.Reason, Message: s.ServerError.Message}
 }
